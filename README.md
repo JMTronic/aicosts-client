@@ -10,7 +10,8 @@ Das Dashboard und die Cloud dahinter sind ein eigener Dienst.
 Das Plugin
 
 - zeigt über dem Prompt ein **Band**: Kontext-Füllgrad, Session-Token und Kosten, Monatssumme,
-  Cache-Restzeit und einen Hinweis, wann sich eine Übergabe an eine neue Session lohnt,
+  Cache-Restzeit und einen Hinweis, wann sich eine Übergabe an eine neue Session lohnt.
+  Kosten stehen standardmäßig als **echte Kosten in Euro** da (siehe [Kosten im Band](#kosten-im-band)),
 - hält im Leerlauf den **Prompt-Cache warm** (Keep-Alive, Standard: höchstens 12 Pings nach deiner letzten Eingabe),
 - **erfasst live** jede Antwort (Hauptstrang und Subagenten) und lädt die Kennzahlen in dein AICosts-Dashboard hoch.
 
@@ -102,8 +103,9 @@ Rechners (macOS-Computername).
 | Befehl | Wirkung |
 |---|---|
 | `/aicosts login` | Rechner mit deinem AICosts-Workspace verbinden (Geräte-Code im Browser bestätigen) |
-| `/aicosts status` | Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, Version (auch `/aicosts` ohne Zusatz) |
+| `/aicosts status` | Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, Kostenmodus und Umrechnungsfaktor, Version (auch `/aicosts` ohne Zusatz) |
 | `/aicosts sync` | aktuelle Session und noch nicht hochgeladene ältere Sessions sofort hochladen |
+| `/aicosts kosten echt` · `/aicosts kosten api` | Kosten im Band als echte Kosten in Euro (Standard) oder als API-Gegenwert in US-Dollar; gilt für alle Sessions. `/aicosts kosten` allein zeigt Modus und Faktor |
 | `/aicosts logout` | Token auf diesem Rechner löschen; die Erfassung läuft lokal weiter |
 | `/cache` oder `/cache status` | Cache-Restzeit und Keep-Alive anzeigen |
 | `/cache an` · `/cache aus` | Keep-Alive ein- bzw. ausschalten (auch `on` · `off`) |
@@ -113,6 +115,20 @@ Rechners (macOS-Computername).
 
 Ein Keep-Alive-Ping ist eine sehr kurze Anfrage an das Modell deiner Session. Er liest den Cache und kostet
 dadurch nur einen Bruchteil einer normalen Anfrage. Wer das nicht möchte, schaltet ihn mit `/cache aus` ab.
+
+## Kosten im Band
+
+Beispiel: `Session 1.25M Token (Out 18.4k) · ≈2,10 € · Okt 45.20M Token · 90,00 €`
+
+| Anzeige | Bedeutung |
+|---|---|
+| `≈2,10 €` | echte Kosten der laufenden Session, **anteilig**: Claude Codes Kostenzähler (USD zum API-Preis, wie `/cost`) × Umrechnungsfaktor deines Workspace für den Monat (Anteil an Abo und projektlosen Credits, ohne Gemeinkosten – wie die Sessions im Dashboard) |
+| `Okt 45.20M Token · 90,00 €` | Monatssumme deiner Sessions im Workspace: Token und echte Kosten inklusive Gemeinkosten. Nutzt nur du den Workspace, ist das genau Abo + projektlose Credits. Direkt einem Projekt gebuchte Kosten sind nicht enthalten (sie stehen nur im Dashboard) |
+| `$2.37 API` · `$87.40 API` | Rückfall auf den API-Gegenwert in US-Dollar: nicht verbunden, der Server liefert noch keinen Faktor (z. B. noch keine Session im Monat oder ältere Server-Version) oder im Dashboard ist für den Monat kein Abo hinterlegt |
+| `$2.37` · `$87.40` | Modus `api` (`/aicosts kosten api`): API-Gegenwert in US-Dollar wie in Version 0.1 |
+
+Den Umrechnungsfaktor berechnet der Server mit derselben Regel wie der Dashboard-Schalter „Echt (EUR)“.
+Der Faktor ändert sich im Laufe des Monats: Je mehr Nutzung, desto weniger kostet ein Dollar API-Gegenwert.
 
 ## Updates
 

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { CacheSettings, CacheState, SessionSumme, Verbindung } from '../types'
+import type { CacheSettings, CacheState, Kostenmodus, SessionSumme, Verbindung } from '../types'
 import {
   DEFAULT_SETTINGS,
   SETTINGS_VERSION,
@@ -38,14 +38,14 @@ import {
   type Journal,
 } from './journal'
 import { baueSession, istLeer, pruefeSession, PAYLOAD_SCHEMA_VERSION, type IngestPayload } from './payload'
-import { formatTokens, monatKurz, parseStats } from './stats'
+import { bandKosten, formatTokens, leseModus, modusText, monatKurz, parseKostenArgs, parseStats, STANDARD_MODUS } from './stats'
 
 // Plugin „aicosts“: Band (Kontext, Kosten, Cache), Cache-Keep-Alive, Live-Erfassung und Upload an die AICosts-Cloud.
 // DATENSCHUTZ: Es werden nur Kennzahlen erfasst und gesendet – niemals Prompt- oder Antworttext.
 // Der Token liegt nur in $.store und wird nie angezeigt oder geloggt.
 
 /** Muss mit .claude-plugin/plugin.json übereinstimmen */
-export const VERSION = '0.1.1'
+export const VERSION = '0.2.0'
 const PARSER_VERSION = `aicosts-plugin/${VERSION}`
 
 // Schwellen für den Übergabe-Hinweis, in Prozent des Kontextfensters
@@ -74,6 +74,9 @@ const K_SETTINGS_VERSION = 'cacheSettingsVersion'
 const K_STATS = 'statsCache'
 const K_LETZTER_UPLOAD = 'letzterUpload'
 const K_LETZTER_FEHLER = 'letzterFehler'
+const K_MODUS = 'kostenModus'
+
+const BEFEHLE = 'Befehle: /aicosts login | status | sync | kosten [echt|api] | logout'
 
 const emptyCache: CacheState = { lastActivityAt: null, isRunning: false, pings: 0, lastPing: null }
 const leereSumme: SessionSumme = { tokens: 0, outputTokens: 0 }
@@ -85,6 +88,7 @@ const cache = atom({ plugin: 'aicosts', key: 'cache' } as const, emptyCache)
 const tick = atom({ plugin: 'aicosts', key: 'tick' } as const, 0)
 const stats = atom({ plugin: 'aicosts', key: 'stats' } as const, null)
 const verbindung = atom({ plugin: 'aicosts', key: 'verbindung' } as const, getrennt)
+const modusAtom = atom({ plugin: 'aicosts', key: 'modus' } as const, STANDARD_MODUS as Kostenmodus)
 
 // Geschützte Leerzeichen verhindern Umbrüche innerhalb eines Segments
 const NBSP = '\u00a0'
@@ -496,8 +500,25 @@ const statusText = async ($: EngineInterface): Promise<string> => {
     `Offene Uploads: ${offenGesamt}`,
     `Letzter Fehler: ${typeof fehler?.text === 'string' ? `${fehler.text}${typeof fehler.zeit === 'number' ? ` (${zeitText(fehler.zeit)})` : ''}` : '–'}`,
     ...(j !== null ? [`Diese Session: ${j.vollstaendig ? 'vollständig erfasst' : 'erst seit Plugin-Start erfasst (Teil-Erfassung)'}`] : []),
+    ...modusText(await read($, modusAtom), token !== null, await read($, stats)),
     ...(istErlaubteUrl(basisOverride) ? [`Server: ${basisOverride}`] : []),
-    'Befehle: /aicosts login | status | sync | logout',
+    BEFEHLE,
+  ].join('\n')
+}
+
+/** /aicosts kosten [echt|api]: Modus zeigen oder setzen (gespeichert in $.store, gilt für alle Sessions) */
+const kostenBefehl = async ($: EngineInterface, arg: string | undefined): Promise<string> => {
+  const parsed = parseKostenArgs(arg)
+  if (parsed === null) return `Unbekannt: "${arg ?? ''}". Erlaubt: /aicosts kosten echt | api`
+  if (parsed !== 'zeigen') {
+    await $.store.set(K_MODUS, parsed)
+    await update($, modusAtom, () => parsed)
+  }
+  const verbunden = (await leseToken($)) !== null
+  return [
+    ...(parsed === 'zeigen' ? [] : [`Kostenmodus gespeichert: ${parsed}`]),
+    ...modusText(await read($, modusAtom), verbunden, await read($, stats)),
+    'Umschalten: /aicosts kosten echt | api',
   ].join('\n')
 }
 
@@ -579,7 +600,11 @@ export const register: Register = on => {
       }
 
       await $.command.register({ name: 'cache', description: 'Cache-Restzeit und Keep-Alive: an | aus | ttl 5|60 | max N | ping | status' })
-      await $.command.register({ name: 'aicosts', description: 'AICosts: login | status | sync | logout', argumentHint: '[login|status|sync|logout]' })
+      await $.command.register({
+        name: 'aicosts',
+        description: 'AICosts: login | status | sync | kosten [echt|api] | logout',
+        argumentHint: '[login|status|sync|kosten echt|kosten api|logout]',
+      })
 
       // Takt: Countdown neu zeichnen und kurz vor Ablauf im Leerlauf pingen
       $.clock.every(TICK_MS, async () => {
@@ -588,6 +613,10 @@ export const register: Register = on => {
         const c = await read($, cache)
         if (shouldPing(c, s, await $.clock.now())) await ping($).catch(() => undefined)
       })
+
+      // Kostenmodus (sessionübergreifend), Standard „echt“
+      const modus = leseModus(await $.store.get(K_MODUS))
+      await update($, modusAtom, () => modus)
 
       // Letzter Stand der Monatssumme sofort zeigen, danach frisch holen
       await zeigeVerbindung($)
@@ -620,7 +649,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'aicosts' }, async ($, e) => {
-    const [wort = ''] = e.args.trim().toLowerCase().split(/\s+/)
+    const [wort = '', arg] = e.args.trim().toLowerCase().split(/\s+/)
     if (wort === 'login') return { text: await starteLogin($) }
     if (wort === 'logout') return { text: await logout($) }
     if (wort === 'sync') {
@@ -628,8 +657,9 @@ export const register: Register = on => {
       void ladeStats($, true)
       return { text }
     }
+    if (wort === 'kosten') return { text: await kostenBefehl($, arg) }
     if (wort === '' || wort === 'status') return { text: await statusText($) }
-    return { text: `Unbekannt: "${e.args}".\nBefehle: /aicosts login | status | sync | logout` }
+    return { text: `Unbekannt: "${e.args}".\n${BEFEHLE}` }
   })
 
   // Eigene Eingabe (Tastatur oder Handy): Ping-Zähler zurücksetzen, Wartezeit verbuchen
@@ -723,6 +753,8 @@ export const register: Register = on => {
     const sum = await read($, summeAtom)
     const verb = await read($, verbindung)
     const monat = await read($, stats)
+    const kosten = bandKosten(await read($, modusAtom), verb.verbunden, monat, cost?.usd ?? 0)
+    const zusatz = kosten.zusatz === null ? '' : ` ${kosten.zusatz}`
 
     const { Box, Text } = $.ui.resolve(e)
     const cacheProps = cacheInfo.color === 'dim' ? { dimColor: true } : { color: cacheInfo.color }
@@ -733,7 +765,7 @@ export const register: Register = on => {
         : [
             {
               key: 'monat',
-              text: `${monatKurz(monat.monat)} ${formatTokens(monat.gesamt.tokens)} Token · $${monat.gesamt.kostenUsd.toFixed(2)}`,
+              text: `${monatKurz(monat.monat)} ${formatTokens(monat.gesamt.tokens)} Token · ${kosten.monat ?? ''}${zusatz}`,
               props: { dimColor: true },
             },
           ]
@@ -742,7 +774,7 @@ export const register: Register = on => {
     const segments = [
       { key: 'kontext', text: `Kontext ${formatTokens(tokens)} / ${formatTokens(context.window)}`, props: { dimColor: true } },
       { key: 'session', text: `Session ${formatTokens(sum.tokens)} Token (Out ${formatTokens(sum.outputTokens)})`, props: { dimColor: true } },
-      { key: 'kosten', text: `$${(cost?.usd ?? 0).toFixed(2)}`, props: { dimColor: true } },
+      { key: 'kosten', text: `${kosten.session}${zusatz}`, props: { dimColor: true } },
       ...monatsSegment,
       { key: 'cache', text: cacheInfo.text, props: cacheProps },
       { key: 'hinweis', text: hint.text, props: { color: hint.color } },

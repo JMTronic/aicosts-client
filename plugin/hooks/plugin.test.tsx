@@ -352,3 +352,96 @@ test('Band zeigt Session-Summe und Monatswert, wenn verbunden', async ($, on) =>
     await ui.unmount()
   }
 })
+
+const STATS_ECHT = {
+  version: 1,
+  monat: '2026-10',
+  gesamt: { tokens: 668_590_000, output_tokens: 1000, kosten_usd: 268.65, sessions: 3, echt_eur: 90 },
+  session: null,
+  faktor: { monat: '2026-10', eur_pro_usd_projekt: 0.5, eur_pro_usd_gesamt: 0.625, abo_hinterlegt: true },
+}
+
+const echtServer = (stats: unknown) => (a: Anfrage): HttpResponse =>
+  a.url.endsWith('/ingest/stats') ? antwort(200, stats) : standardServer(a)
+
+test('Band zeigt standardmäßig echte Kosten in EUR', async ($, on) => {
+  const w = welt(on, echtServer(STATS_ECHT), { token: 'aic_geheim1234567', workspace: 'Team' })
+  w.sitzung.kosten = 7.48
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await w.uhr.advance(2_000)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'aicosts', surface, ...BAND })
+    expect(await ui.find({ type: 'Text', text: /^≈3,74\s€$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Okt\s668\.59M\sToken\s·\s90,00\s€$/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('/aicosts kosten api|echt schaltet um und wird gespeichert', async ($, on) => {
+  const w = welt(on, echtServer(STATS_ECHT), { token: 'aic_geheim1234567', workspace: 'Team' })
+  w.sitzung.kosten = 7.48
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await w.uhr.advance(2_000)
+
+  const zeigen = await befehl($, 'kosten')
+  expect(zeigen.text).toContain('echt (EUR)')
+  expect(zeigen.text).toContain('Session 0,5000 €/$')
+
+  const api = await befehl($, 'kosten api')
+  expect(api.text).toContain('Kostenmodus gespeichert: api')
+  expect(w.speicher.get('kostenModus')).toBe('api')
+  let ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^\$7\.48$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Okt\s668\.59M\sToken\s·\s\$268\.65$/ })).toBeDefined()
+  await ui.unmount()
+
+  const status = await befehl($, 'status')
+  expect(status.text).toContain('Kosten im Band: api (USD)')
+  expect(status.text).toContain('Faktor Okt')
+
+  expect((await befehl($, 'kosten bitcoin')).text).toContain('Unbekannt')
+  expect(w.speicher.get('kostenModus')).toBe('api')
+
+  await befehl($, 'kosten echt')
+  expect(w.speicher.get('kostenModus')).toBe('echt')
+  ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^≈3,74\s€$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Gespeicherter Modus „api“ gilt ab Sessionstart', async ($, on) => {
+  const w = welt(on, echtServer(STATS_ECHT), { token: 'aic_geheim1234567', kostenModus: 'api' })
+  w.sitzung.kosten = 1
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await w.uhr.advance(2_000)
+  const ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^\$1\.00$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Rückfall auf USD mit Zusatz „API“: kein Abo, älterer Server, nicht verbunden', async ($, on) => {
+  let antwortStats: unknown = { ...STATS_ECHT, faktor: { ...STATS_ECHT.faktor, abo_hinterlegt: false } }
+  const w = welt(on, a => (a.url.endsWith('/ingest/stats') ? antwort(200, antwortStats) : standardServer(a)), { token: 'aic_geheim1234567' })
+  w.sitzung.kosten = 7.48
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await w.uhr.advance(2_000)
+  let ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^\$7\.48\sAPI$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /·\s\$268\.65\sAPI$/ })).toBeDefined()
+  await ui.unmount()
+
+  // älterer Server ohne neue Felder
+  antwortStats = STATS
+  await befehl($, 'sync')
+  await w.uhr.settle()
+  ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /·\s\$12\.50\sAPI$/ })).toBeDefined()
+  await ui.unmount()
+
+  // abgemeldet
+  await befehl($, 'logout')
+  ui = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /^\$7\.48\sAPI$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /nicht\sverbunden/ })).toBeDefined()
+  await ui.unmount()
+})

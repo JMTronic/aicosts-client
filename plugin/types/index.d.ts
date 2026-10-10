@@ -34,13 +34,31 @@ export type UsageFigures = {
   tokens: number
   outputTokens: number
   kostenUsd: number
+  /** Echte Kosten in EUR (seit Server-Migration 20261011120000); null, wenn der Server sie nicht liefert */
+  echtEur: number | null
+}
+
+// Umrechnung API-Gegenwert (USD) → echte Kosten (EUR) des Monats, wie im Dashboard
+export type KostenFaktor = {
+  /** "YYYY-MM" */
+  monat: string
+  /** EUR je USD für Sessions (anteilig, ohne Gemeinkosten) */
+  eurProUsdProjekt: number
+  /** EUR je USD für die Monatssumme (inkl. Gemeinkosten) */
+  eurProUsdGesamt: number
+  aboHinterlegt: boolean
 }
 
 export type BandStats = {
   monat: string
   gesamt: UsageFigures
   session: UsageFigures | null
+  /** null: Server ohne Faktor (ältere Version oder noch keine Sessions im Monat) */
+  faktor: KostenFaktor | null
 }
+
+// Anzeige der Kosten im Band: echte Kosten (EUR) oder API-Gegenwert (USD); sessionübergreifend in $.store
+export type Kostenmodus = 'echt' | 'api'
 
 // Verbindung zur AICosts-Cloud (ohne Token)
 export type Verbindung = {
@@ -57,6 +75,7 @@ declare module 'claude-code' {
       tick: number
       stats: BandStats | null
       verbindung: Verbindung
+      modus: Kostenmodus
     }
   }
 }

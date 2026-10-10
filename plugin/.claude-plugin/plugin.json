@@ -1,6 +1,6 @@
 {
   "name": "aicosts",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "AICosts: Band mit Kontext, Kosten und Cache-Restzeit, Cache-Keep-Alive und Live-Erfassung der Nutzung für das AICosts-Dashboard",
   "author": { "name": "JMTronic" },
   "license": "MIT",

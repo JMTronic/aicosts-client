@@ -287,7 +287,7 @@ details > div { padding: 10px 14px 4px; font-size: 14px; }
       <div class="brand-pipe"></div>
       <div class="brand-label">AICosts · Installation</div>
     </div>
-    <div class="nav-badge">Plugin 0.1.1</div>
+    <div class="nav-badge">Plugin 0.2.0</div>
   </nav>
 </header>
 
@@ -426,14 +426,14 @@ Hinzugefügt: JMTronic/aicosts-client
 
 ==&gt; Plugin aicosts@aicosts
 Installiert.
-Version 0.1.1.
+Version 0.2.0.
 
 ==&gt; Auto-Update
 Auto-Update gesetzt in ~/.claude/plugins/known_marketplaces.json (Sicherung: …)
 Auto-Update gesetzt in ~/.claude/settings.json (Sicherung: …)
 
 ==&gt; Fertig
-<span class="t-ok">AICosts 0.1.1 ist installiert.</span>
+<span class="t-ok">AICosts 0.2.0 ist installiert.</span>
 Claude Code neu starten (laufende Sessions: /reload-plugins), dann /aicosts login eingeben.</pre>
       <p>Ein erneuter Aufruf schadet nicht: Ist alles aktuell, meldet der Installer „es gab nichts zu aktualisieren“.</p>
     </li>
@@ -477,12 +477,12 @@ Der Code gilt 10 Minuten. Sobald du bestätigst, erscheint hier eine Meldung.</p
   <div class="section-label">06 · Im Alltag</div>
   <h2>Das Band erklärt</h2>
   <p>Über dem Prompt zeigt Claude Code jetzt eine Zeile wie diese (Nachbau, Werte als Beispiel):</p>
-  <div class="band" role="img" aria-label="Beispiel des AICosts-Bands: Kontext 34 Prozent, Session 1,25 Millionen Token, 2,37 Dollar, Oktober 45,2 Millionen Token für 87,40 Dollar, Cache 47 Minuten, Kontext unkritisch">
+  <div class="band" role="img" aria-label="Beispiel des AICosts-Bands: Kontext 34 Prozent, Session 1,25 Millionen Token, anteilig etwa 2,10 Euro, Oktober 45,2 Millionen Token für 90,00 Euro echte Kosten, Cache 47 Minuten, Kontext unkritisch">
     <span class="balken t-ok">████████░░░░░░░░░░░░░░░░ 34 %</span>
     <span class="t-dim">Kontext 340.5k / 1.00M</span>
     <span><span class="sep">·</span><span class="t-dim">Session 1.25M Token (Out 18.4k)</span></span>
-    <span><span class="sep">·</span><span class="t-dim">$2.37</span></span>
-    <span><span class="sep">·</span><span class="t-dim">Okt 45.20M Token · $87.40</span></span>
+    <span><span class="sep">·</span><span class="t-dim">≈2,10 €</span></span>
+    <span><span class="sep">·</span><span class="t-dim">Okt 45.20M Token · 90,00 €</span></span>
     <span><span class="sep">·</span><span class="t-ok">Cache 47 Min ♻ 0/12</span></span>
     <span><span class="sep">·</span><span class="t-ok">Kontext unkritisch</span></span>
   </div>
@@ -495,10 +495,12 @@ Der Code gilt 10 Minuten. Sobald du bestätigst, erscheint hier eine Meldung.</p
     <div>Belegter Kontext / Größe des Kontextfensters in Token (k = Tausend, M = Million).</div>
     <div><span class="chip t-dim">Session 1.25M Token (Out 18.4k)</span></div>
     <div>Alle Token dieser Session (Eingabe, Ausgabe, Cache lesen und schreiben, inklusive Subagenten); in Klammern nur die Ausgabe-Token.</div>
-    <div><span class="chip t-dim">$2.37</span></div>
-    <div>Kosten dieser Session in US-Dollar, wie Claude Code sie selbst zählt (wie <code>/cost</code>).</div>
-    <div><span class="chip t-dim">Okt 45.20M Token · $87.40</span></div>
-    <div>Monatssumme Token · Kosten aus dem Dashboard (alle hochgeladenen Sessions des Workspace). Vor dem Login steht hier <span class="chip t-dim">nicht verbunden · /aicosts login</span>.</div>
+    <div><span class="chip t-dim">≈2,10 €</span></div>
+    <div><strong>Echte Kosten</strong> dieser Session in Euro, anteilig: Claude Codes Kostenzähler (wie <code>/cost</code>, in US-Dollar zum API-Preis) mal dem Umrechnungsfaktor deines Workspace für diesen Monat – also der Anteil der Session an Abo und Credits, wie im Dashboard bei den Sessions (ohne Gemeinkosten). Das <code>≈</code> steht für „anteilig“.</div>
+    <div><span class="chip t-dim">Okt 45.20M Token · 90,00 €</span></div>
+    <div>Monatssumme deiner hochgeladenen Sessions in diesem Workspace: Token · echte Kosten in Euro (Abo und projektlose Credits inklusive Gemeinkosten, wie im Dashboard). Nutzt nur du den Workspace, ist das genau dein Abo plus projektlose Credits. Direkt einem Projekt gebuchte Kosten zählen hier nicht mit. Vor dem Login steht hier <span class="chip t-dim">nicht verbunden · /aicosts login</span>.</div>
+    <div><span class="chip t-dim">$2.37 API</span></div>
+    <div>Rückfall auf den <strong>API-Gegenwert in US-Dollar</strong>: Das Band zeigt Dollar mit dem Zusatz <code>API</code>, solange es nicht verbunden ist, der Server noch keinen Umrechnungsfaktor liefert (z. B. noch keine Session im Monat) oder im Dashboard für den Monat kein Abo hinterlegt ist. Mit <code>/aicosts kosten api</code> zeigst du dauerhaft Dollar ohne Zusatz (<span class="chip t-dim">$2.37</span>, <span class="chip t-dim">Okt 45.20M Token · $87.40</span>), mit <code>/aicosts kosten echt</code> wieder Euro.</div>
     <div><span class="chip t-ok">Cache 47 Min ♻ 0/12</span></div>
     <div>Restzeit des Prompt-Caches. <span class="chip t-ok">Cache aktiv</span> während Claude antwortet; unter 10 Minuten als <span class="chip t-warn">Cache 7:42</span>, unter 3 Minuten <span class="chip t-err">rot</span>; danach <span class="chip t-err">Cache abgelaufen</span>; <span class="chip t-dim">Cache –</span> vor der ersten Antwort. <code>♻ 0/12</code> = Keep-Alive-Pings seit deiner letzten Eingabe / Höchstzahl; <code>♻ aus</code>, wenn Keep-Alive abgeschaltet ist.</div>
     <div><span class="chip t-ok">Kontext unkritisch</span></div>
@@ -519,8 +521,9 @@ Der Code gilt 10 Minuten. Sobald du bestätigst, erscheint hier eine Meldung.</p
       <thead><tr><th>Befehl</th><th>Wirkung</th></tr></thead>
       <tbody>
         <tr><td><code>/aicosts login</code></td><td>Rechner mit deinem AICosts-Workspace verbinden (Code im Browser bestätigen)</td></tr>
-        <tr><td><code>/aicosts status</code></td><td>Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, Version (auch <code>/aicosts</code> allein)</td></tr>
+        <tr><td><code>/aicosts status</code></td><td>Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, Kostenmodus und Umrechnungsfaktor, Version (auch <code>/aicosts</code> allein)</td></tr>
         <tr><td><code>/aicosts sync</code></td><td>aktuelle und noch nicht hochgeladene ältere Sessions sofort hochladen</td></tr>
+        <tr><td><code>/aicosts kosten echt</code> · <code>/aicosts kosten api</code></td><td>Kosten im Band als echte Kosten in Euro (Standard) oder als API-Gegenwert in US-Dollar; gilt für alle Sessions. <code>/aicosts kosten</code> allein zeigt Modus und Umrechnungsfaktor</td></tr>
         <tr><td><code>/aicosts logout</code></td><td>Token auf diesem Rechner löschen; die Erfassung läuft lokal weiter</td></tr>
         <tr><td><code>/cache</code></td><td>Cache-Restzeit und Keep-Alive anzeigen (auch <code>/cache status</code>)</td></tr>
         <tr><td><code>/cache an</code> · <code>/cache aus</code></td><td>Keep-Alive ein- bzw. ausschalten (auch <code>on</code> · <code>off</code>)</td></tr>
@@ -657,7 +660,7 @@ claude plugin update aicosts@aicosts</pre></div>
 </main>
 
 <div class="doc-footer">
-  <span>AICosts-Installationsanleitung · Plugin 0.1.1 · Stand 2026-10</span>
+  <span>AICosts-Installationsanleitung · Plugin 0.2.0 · Stand 2026-10</span>
   <a href="https://github.com/JMTronic/aicosts-client" target="_blank" rel="noopener noreferrer">GitHub: JMTronic/aicosts-client</a>
   <a href="https://aicosts.netlify.app" target="_blank" rel="noopener noreferrer">Dashboard: aicosts.netlify.app</a>
 </div>
