@@ -4,6 +4,9 @@ AICosts zeigt, was deine Arbeit mit Claude Code kostet: je Session, je Projekt u
 Modellen und Arbeitszeit. Dieses Repository enthält den offenen Teil, das Claude-Code-Plugin `aicosts`.
 Das Dashboard und die Cloud dahinter sind ein eigener Dienst.
 
+**Schritt-für-Schritt-Anleitung (auch zum Ausdrucken):** https://aicosts.netlify.app/anleitung.html
+(Quelle: [`docs/anleitung.html`](docs/anleitung.html), eine eigenständige HTML-Datei, die auch offline funktioniert).
+
 Das Plugin
 
 - zeigt über dem Prompt ein **Band**: Kontext-Füllgrad, Session-Token und Kosten, Monatssumme,
@@ -203,6 +206,10 @@ claude plugin validate .
 claude plugin validate plugin
 claude plugin test plugin
 ```
+
+Die Installationsanleitung `docs/anleitung.html` wird zusätzlich vom Dashboard als `/anleitung.html` ausgeliefert
+(Kopie im privaten Dashboard-Repo). Nach jeder Änderung dort die Kopie aktualisieren, sonst schlägt ein Test fehl.
+Fonts und Logo sind als Base64 eingebettet; die Datei braucht keine externen Ressourcen.
 
 ## Lizenz
 
