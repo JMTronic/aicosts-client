@@ -1,0 +1,12 @@
+# Betriebssystem
+.DS_Store
+
+# Abhängigkeiten und Build-Ausgaben
+node_modules/
+dist/
+coverage/
+*.log
+
+# Lokale Umgebungen
+.env
+.env.*

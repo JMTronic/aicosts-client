@@ -1,0 +1,14 @@
+{
+  "name": "aicosts",
+  "owner": {
+    "name": "JMTronic"
+  },
+  "description": "AICosts – Kosten und Nutzung von Claude Code erfassen und im Dashboard auswerten",
+  "plugins": [
+    {
+      "name": "aicosts",
+      "source": "./plugin",
+      "description": "Band mit Kontext, Kosten und Cache-Restzeit, Cache-Keep-Alive und Live-Erfassung der Nutzung für das AICosts-Dashboard"
+    }
+  ]
+}
