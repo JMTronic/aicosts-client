@@ -257,6 +257,71 @@ test('Upload-Fehler bleibt offen und wird beim Sessionende erneut angestoßen', 
   expect(JSON.parse(w.dateien.get(JOURNAL('sess-1')) ?? '{}').dirty).toBe(false)
 })
 
+const ANTWORT = { model: 'claude-opus-5-5', input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+
+const letzteKosten = (w: Welt): unknown => {
+  const uploads = w.anfragen.filter(a => a.url.endsWith('/ingest'))
+  return JSON.parse(uploads.at(-1)?.init?.body ?? '{}').sessions?.[0]?.kosten_engine_usd
+}
+
+test('Kosten nach der letzten Antwort: entprellter Upload übernimmt den aktuellen Zähler', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' })
+  w.sitzung.kosten = 0.3385
+  await $.turn.complete({ ...fertig, turnId: 't1', durationMs: 1000, usage: ANTWORT })
+  // Hintergrundaufruf von Claude Code ohne turn.complete
+  w.sitzung.kosten = 0.36
+  await w.uhr.advance(21_000)
+  await w.uhr.settle()
+  expect(letzteKosten(w)).toBe(0.36)
+  const j = JSON.parse(w.dateien.get(JOURNAL('sess-1')) ?? '{}')
+  expect(j.kosten.basis + j.kosten.letzter).toBe(0.36)
+  expect(j.dirty).toBe(false)
+})
+
+test('Kosten nach dem letzten Upload: Sessionende lädt den gestiegenen Zähler hoch', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' })
+  w.sitzung.kosten = 0.30
+  await $.turn.complete({ ...fertig, turnId: 't1', durationMs: 1000, usage: ANTWORT })
+  await w.uhr.advance(21_000)
+  await w.uhr.settle()
+  expect(letzteKosten(w)).toBe(0.3)
+  const vorher = w.anfragen.filter(a => a.url.endsWith('/ingest')).length
+
+  // sonst unverändertes Journal: nur der Kostenzähler steigt
+  w.sitzung.kosten = 0.36
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  await w.uhr.settle()
+  expect(w.anfragen.filter(a => a.url.endsWith('/ingest')).length).toBe(vorher + 1)
+  expect(letzteKosten(w)).toBe(0.36)
+  expect(JSON.parse(w.dateien.get(JOURNAL('sess-1')) ?? '{}').dirty).toBe(false)
+})
+
+test('/aicosts sync übernimmt den Zähler nur für die laufende Session', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' })
+  w.sitzung.kosten = 0.10
+  await $.turn.complete({ ...fertig, turnId: 't1', durationMs: 1000, usage: ANTWORT })
+  await w.uhr.advance(21_000)
+  await w.uhr.settle()
+
+  // offenes Journal einer anderen Session mit eigenem Kostenstand
+  const fremd = JSON.parse(w.dateien.get(JOURNAL('sess-1')) ?? '{}')
+  w.dateien.set(JOURNAL('sess-alt'), JSON.stringify({ ...fremd, session_id: 'sess-alt', kosten: { basis: 0, letzter: 5 }, dirty: true }))
+
+  w.sitzung.kosten = 0.25
+  const r = await befehl($, 'sync')
+  expect(r.text).toContain('Hochgeladen: 2 Session(s).')
+  const uploads = w.anfragen.filter(a => a.url.endsWith('/ingest'))
+  const sessions: { session_id: string; kosten_engine_usd: number }[] = JSON.parse(uploads.at(-1)?.init?.body ?? '{}').sessions
+  expect(sessions.find(s => s.session_id === 'sess-1')?.kosten_engine_usd).toBe(0.25)
+  expect(sessions.find(s => s.session_id === 'sess-alt')?.kosten_engine_usd).toBe(5)
+})
+
 test('Plugin kommt mitten in einer Session dazu: Teil-Erfassung markiert', async ($, on) => {
   const w = welt(on, standardServer)
   w.sitzung.turns = 4

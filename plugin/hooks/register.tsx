@@ -45,7 +45,7 @@ import { bandKosten, formatTokens, leseModus, modusText, monatKurz, parseKostenA
 // Der Token liegt nur in $.store und wird nie angezeigt oder geloggt.
 
 /** Muss mit .claude-plugin/plugin.json übereinstimmen */
-export const VERSION = '0.2.0'
+export const VERSION = '0.2.1'
 const PARSER_VERSION = `aicosts-plugin/${VERSION}`
 
 // Schwellen für den Übergabe-Hinweis, in Prozent des Kontextfensters
@@ -316,12 +316,33 @@ const hochladen = async ($: EngineInterface, journale: Journal[]): Promise<strin
   }
 }
 
-/** Upload entprellt anstoßen: 20 s nach der letzten Antwort */
+/**
+ * Übernimmt den Kostenzähler von Claude Code frisch ins Journal der laufenden Session.
+ * Claude Code verbucht auch nach turn.complete noch Kosten (Hintergrundaufrufe); das Band liest live,
+ * das Journal nur bei Anlässen. Deshalb vor jedem Upload abgleichen. Nur für die laufende Session
+ * (`sid` = deren ID; ohne Angabe $.session.id()), nie für Journale anderer Sessions. Fehler werden geschluckt.
+ */
+const frischeKosten = async ($: EngineInterface, j: Journal, sid?: string): Promise<void> => {
+  try {
+    if (j.session_id !== (sid ?? (await $.session.id()))) return
+    const { cost } = await $.session.usage()
+    const rev = j.rev
+    verbucheKosten(j, cost?.usd)
+    if (j.rev !== rev && !istLeer(j)) await speichere($, j)
+  } catch {
+    // Upload läuft auch ohne frischen Kostenstand
+  }
+}
+
+/** Upload entprellt anstoßen: 20 s nach der letzten Antwort, mit frisch übernommenem Kostenstand */
 const planeUpload = ($: EngineInterface): void => {
   uploadTimer?.cancel()
-  uploadTimer = $.clock.after(UPLOAD_NACH_MS, () => {
+  uploadTimer = $.clock.after(UPLOAD_NACH_MS, async () => {
     uploadTimer = null
-    if (journal !== null) void hochladen($, [journal])
+    const j = journal
+    if (j === null) return
+    await frischeKosten($, j)
+    void hochladen($, [j])
   })
 }
 
@@ -348,8 +369,10 @@ const offeneJournale = async ($: EngineInterface): Promise<Journal[]> => {
 }
 
 const allesNachholen = async ($: EngineInterface): Promise<string> => {
+  const aktuell = journal
+  if (aktuell !== null) await frischeKosten($, aktuell)
   const andere = await offeneJournale($)
-  return hochladen($, [...(journal !== null ? [journal] : []), ...andere])
+  return hochladen($, [...(aktuell !== null ? [aktuell] : []), ...andere])
 }
 
 // ---------------------------------------------------------------------------
@@ -725,13 +748,15 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Ende: Upload nur anstoßen (Budget 1,5 s), nicht abwarten; Fehlschläge holt der nächste Start nach
+  // Ende: Upload nur anstoßen (Budget 1,5 s), nicht abwarten; Fehlschläge holt der nächste Start nach.
+  // Vorher den Kostenstand übernehmen (lokal und schnell), sonst fehlen Kosten nach der letzten Antwort.
   on('session.end', async ($, e, next) => {
     try {
       uploadTimer?.cancel()
       uploadTimer = null
       const j = journal
       if (j !== null && j.session_id === e.sessionId) {
+        await frischeKosten($, j, e.sessionId)
         void hochladen($, [j])
         journal = null
       }
