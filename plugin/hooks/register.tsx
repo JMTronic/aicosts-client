@@ -38,14 +38,15 @@ import {
   type Journal,
 } from './journal'
 import { baueSession, istLeer, pruefeSession, PAYLOAD_SCHEMA_VERSION, type IngestPayload } from './payload'
+import { limitSegmente } from './limits'
 import { bandKosten, formatTokens, leseModus, modusText, monatKurz, parseKostenArgs, parseStats, STANDARD_MODUS } from './stats'
 
-// Plugin „aicosts“: Band (Kontext, Kosten, Cache), Cache-Keep-Alive, Live-Erfassung und Upload an die AICosts-Cloud.
+// Plugin „aicosts“: Band (Kontext, Kosten, Abo-Limits, Cache), Cache-Keep-Alive, Live-Erfassung und Upload an die AICosts-Cloud.
 // DATENSCHUTZ: Es werden nur Kennzahlen erfasst und gesendet – niemals Prompt- oder Antworttext.
 // Der Token liegt nur in $.store und wird nie angezeigt oder geloggt.
 
 /** Muss mit .claude-plugin/plugin.json übereinstimmen */
-export const VERSION = '0.2.1'
+export const VERSION = '0.2.2'
 const PARSER_VERSION = `aicosts-plugin/${VERSION}`
 
 // Schwellen für den Übergabe-Hinweis, in Prozent des Kontextfensters
@@ -768,7 +769,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const { context, cost } = await $.session.usage()
+    const { context, cost, rateLimits } = await $.session.usage()
     const percent = Math.round(context.percent ?? 0)
     const tokens = context.tokens ?? 0
     const hint = handoffHint(percent)
@@ -779,6 +780,12 @@ export const register: Register = on => {
     const verb = await read($, verbindung)
     const monat = await read($, stats)
     const kosten = bandKosten(await read($, modusAtom), verb.verbunden, monat, cost?.usd ?? 0)
+    // Abo-Limits des Claude-Kontos (5h-Fenster, Woche); Restzeit läuft über den Takt mit
+    const limits = limitSegmente(rateLimits, await $.clock.now()).map(l => ({
+      key: l.key,
+      text: l.text,
+      props: l.farbe === 'dim' ? { dimColor: true } : { color: l.farbe },
+    }))
     const zusatz = kosten.zusatz === null ? '' : ` ${kosten.zusatz}`
 
     const { Box, Text } = $.ui.resolve(e)
@@ -801,6 +808,7 @@ export const register: Register = on => {
       { key: 'session', text: `Session ${formatTokens(sum.tokens)} Token (Out ${formatTokens(sum.outputTokens)})`, props: { dimColor: true } },
       { key: 'kosten', text: `${kosten.session}${zusatz}`, props: { dimColor: true } },
       ...monatsSegment,
+      ...limits,
       { key: 'cache', text: cacheInfo.text, props: cacheProps },
       { key: 'hinweis', text: hint.text, props: { color: hint.color } },
     ]

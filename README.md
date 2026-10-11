@@ -10,7 +10,7 @@ Das Dashboard und die Cloud dahinter sind ein eigener Dienst.
 Das Plugin
 
 - zeigt über dem Prompt ein **Band**: Kontext-Füllgrad, Session-Token und Kosten, Monatssumme,
-  Cache-Restzeit und einen Hinweis, wann sich eine Übergabe an eine neue Session lohnt.
+  Nutzungslimits deines Abos (5-Stunden-Fenster und Woche), Cache-Restzeit und einen Hinweis, wann sich eine Übergabe an eine neue Session lohnt.
   Kosten stehen standardmäßig als **echte Kosten in Euro** da (siehe [Kosten im Band](#kosten-im-band)),
 - hält im Leerlauf den **Prompt-Cache warm** (Keep-Alive, Standard: höchstens 12 Pings nach deiner letzten Eingabe),
 - **erfasst live** jede Antwort (Hauptstrang und Subagenten) und lädt die Kennzahlen in dein AICosts-Dashboard hoch.
@@ -129,6 +129,15 @@ Beispiel: `Session 1.25M Token (Out 18.4k) · ≈2,10 € · Okt 45.20M Token ·
 
 Den Umrechnungsfaktor berechnet der Server mit derselben Regel wie der Dashboard-Schalter „Echt (EUR)“.
 Der Faktor ändert sich im Laufe des Monats: Je mehr Nutzung, desto weniger kostet ein Dollar API-Gegenwert.
+
+## Nutzungslimits im Band
+
+Beispiel: `5h-Limit 23 % (Reset in 2 h 10 min) · Wochenlimit 41 % (Reset in 3 T 4 h)`
+
+Mit einem Claude-Abo (Pro, Max) zeigt das Band, wie viel der Nutzungslimits deines **Claude-Kontos** verbraucht ist –
+dieselben Werte wie `/usage` in Claude Code, also inklusive Chat und Cowork. Ab 75 % wird das Segment gelb, ab 90 % rot.
+Die Werte kommen von Claude Code selbst (nach der ersten Antwort einer Session) und werden nicht hochgeladen.
+Ohne Abo (API-Schlüssel) fehlen die Segmente.
 
 ## Updates
 

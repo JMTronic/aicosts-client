@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { basisUrl, fehlerText, parseDevicePoll, parseDeviceStart, STANDARD_BASIS_URL, statsUrl } from './geraet'
 import { branchAusHead, elternPfade, gitdirAusDatei, normalisiereRemote } from './git'
+import { formatRestzeit, limitSegmente } from './limits'
 import type { BandStats } from '../types'
 import { bandKosten, echtFaktor, formatEuro, formatUsd, leseModus, modusText, monatKurz, formatTokens, parseKostenArgs, parseStats } from './stats'
 
@@ -149,4 +150,29 @@ test('Kostenmodus: Argumente, gespeicherter Wert, Statuszeilen', () => {
   expect(zeilen[1]).toContain('Session 0,2204 €/$')
   expect(zeilen[1]).toContain('Monat 0,2755 €/$')
   expect(modusText('echt', false, null)).toEqual(['Kosten im Band: echt (EUR) – Anzeige: USD (API-Gegenwert) – nicht verbunden', 'Faktor: –'])
+})
+
+test('Abo-Limits: Restzeit, Reihenfolge, Farben und ungültige Einträge', () => {
+  expect(formatRestzeit(0)).toBe('gleich')
+  expect(formatRestzeit(45 * 60_000)).toBe('45 min')
+  expect(formatRestzeit((2 * 60 + 10) * 60_000)).toBe('2 h 10 min')
+  expect(formatRestzeit(((3 * 24 + 4) * 60 + 5) * 60_000)).toBe('3 T 4 h')
+  const jetzt = Date.UTC(2026, 9, 11, 12, 0, 0)
+  const segmente = limitSegmente(
+    [
+      { kind: 'seven_day', percentUsed: 41, resetsAt: '2026-10-14T16:00:00.000Z' },
+      { kind: 'five_hour', percentUsed: 23.5, resetsAt: '2026-10-11T14:10:00.000Z' },
+      { kind: 'spend_limit', percentUsed: 112 },
+      { kind: 'five_hour', percentUsed: Number.NaN },
+    ],
+    jetzt,
+  )
+  expect(segmente.map(s => s.text)).toEqual([
+    '5h-Limit 23,5 % (Reset in 2 h 10 min)',
+    'Wochenlimit 41 % (Reset in 3 T 4 h)',
+    'Ausgabenlimit 112 %',
+  ])
+  expect(segmente.map(s => s.farbe)).toEqual(['dim', 'dim', 'error'])
+  expect(limitSegmente([{ kind: 'five_hour', percentUsed: 80 }], jetzt)[0]?.farbe).toBe('warning')
+  expect(limitSegmente([], jetzt)).toEqual([])
 })

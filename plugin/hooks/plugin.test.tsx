@@ -16,7 +16,7 @@ interface Welt {
   dateien: Map<string, string>
   anfragen: Anfrage[]
   toasts: string[]
-  sitzung: { id: string; turns: number; kosten: number; kontext: number }
+  sitzung: { id: string; turns: number; kosten: number; kontext: number; limits: { kind: string; percentUsed: number; resetsAt?: string }[] }
   uhr: ReturnType<typeof mock.clock>
   speicher: Map<string, unknown>
 }
@@ -34,7 +34,7 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
     dateien: new Map(),
     anfragen: [],
     toasts: [],
-    sitzung: { id: 'sess-1', turns: 0, kosten: 0, kontext: 20_000 },
+    sitzung: { id: 'sess-1', turns: 0, kosten: 0, kontext: 20_000, limits: [] },
     uhr: mock.clock(on, { now: T0 }),
     speicher: new Map(),
   }
@@ -76,7 +76,7 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
     value: {
       startedAt: T0,
       context: { tokens: w.sitzung.kontext, window: 1_000_000, percent: 2 },
-      rateLimits: [],
+      rateLimits: w.sitzung.limits,
       cost: { usd: w.sitzung.kosten },
     },
   }))
@@ -414,6 +414,25 @@ test('Band zeigt Session-Summe und Monatswert, wenn verbunden', async ($, on) =>
     const ui = await $.ui.mount({ plugin: 'aicosts', surface, ...BAND })
     expect(await ui.find({ type: 'Text', text: /Session\s2\.0k\sToken\s\(Out\s1\.5k\)/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Okt\s2\.00M\sToken\s·\s\$12\.50/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('Band zeigt die Abo-Limits mit Restzeit, ohne Abo keine', async ($, on) => {
+  const w = welt(on, standardServer)
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const ohne = await $.ui.mount({ plugin: 'aicosts', surface: 'terminal', ...BAND })
+  expect(await ohne.find({ type: 'Text', text: /Limit/ })).toBeUndefined()
+  await ohne.unmount()
+  w.sitzung.limits = [
+    { kind: 'five_hour', percentUsed: 23, resetsAt: new Date(T0 + 130 * 60_000).toISOString() },
+    { kind: 'seven_day', percentUsed: 92, resetsAt: new Date(T0 + 76 * 3_600_000).toISOString() },
+  ]
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'aicosts', surface, ...BAND })
+    expect(await ui.find({ type: 'Text', text: /^5h-Limit\s23\s%\s\(Reset\sin\s2\sh\s10\smin\)$/ })).toBeDefined()
+    const woche = await ui.find({ type: 'Text', text: /^Wochenlimit\s92\s%\s\(Reset\sin\s3\sT\s4\sh\)$/ })
+    expect(woche?.props.color).toBe('error')
     await ui.unmount()
   }
 })
