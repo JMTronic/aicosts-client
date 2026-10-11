@@ -374,6 +374,7 @@ details > div { padding: 10px 14px 4px; font-size: 14px; }
       <h3>Nur die Desktop-App</h3>
       <p>Die App aktualisieren: Menü <strong>Claude</strong> → <strong>Nach Updates suchen</strong>.</p>
       <p>Die Version musst du nicht selbst nachsehen: Der Installer findet das Claude-Code-Programm der Desktop-App von allein und zeigt dessen Version an. Meldet das Terminal bei <code>claude --version</code> „command not found“, ist das in diesem Fall normal.</p>
+      <p><strong>Wichtig vor der Installation:</strong> In der App einmal den Bereich <strong>Code</strong> öffnen und eine kurze Session starten (zum Beispiel „Hallo“ schreiben). Erst dann lädt die App ihr Claude-Code-Programm herunter, das der Installer sucht.</p>
     </div>
   </div>
 
@@ -455,6 +456,7 @@ Claude Code neu starten (laufende Sessions: /reload-plugins), dann /aicosts logi
     <li>
       <p>Im Prompt von Claude Code eingeben:</p>
       <div class="befehl"><pre>/aicosts login</pre></div>
+      <p>Genau so, mit dem Schrägstrich ganz vorn. Tippst du <code>/aic</code>, schlägt Claude Code <code>/aicosts</code> vor: auswählen, dann Leerzeichen und <code>login</code>. Nicht den Vorschlag <code>/login</code> allein wählen – das ist die Anmeldung bei deinem Claude-Konto.</p>
       <p>Claude Code antwortet mit einem Link und einem Code, zum Beispiel:</p>
 <pre class="terminal">AICosts mit diesem Rechner verbinden:
   1. Link öffnen: https://aicosts.netlify.app/verbinden?code=ABCD-2345  (in die Zwischenablage kopiert)
@@ -566,7 +568,7 @@ claude plugin update aicosts@aicosts</pre></div>
     <summary><code>claude</code> nicht gefunden, aber die Desktop-App ist installiert</summary>
     <div>
       <p>Kein Problem: Der Installer sucht zuerst <code>claude</code> im Terminal und sonst das Claude-Code-Programm der Desktop-App. Er meldet dann „verwende Claude Code aus der Desktop-App“. Die Befehle unter <a href="#updates">Updates</a> (<code>claude plugin …</code>) gibt es in diesem Fall im Terminal nicht – führe zum Aktualisieren einfach den Installer erneut aus.</p>
-      <p>Meldet der Installer „Claude Code nicht gefunden“, ist weder das Terminal-Programm noch Claude Code der Desktop-App vorhanden. Claude Code installieren (der Befehl steht in der Meldung) und den Installer erneut starten.</p>
+      <p>Meldet der Installer „Claude Code nicht gefunden“, ist weder das Terminal-Programm noch Claude Code der Desktop-App vorhanden. Claude Code installieren (der Befehl steht in der Meldung) und den Installer erneut starten. Nutzt du nur die Desktop-App: dort einmal den Bereich <strong>Code</strong> öffnen und eine kurze Session starten, dann den Installer erneut starten.</p>
     </div>
   </details>
 
@@ -589,6 +591,7 @@ claude plugin update aicosts@aicosts</pre></div>
     <summary><code>/aicosts</code> ist unbekannt oder das Band fehlt</summary>
     <div>
       <p>Claude Code wurde nach der Installation noch nicht neu gestartet. Alle Sessions beenden bzw. die Desktop-App mit <kbd>⌘</kbd> + <kbd>Q</kbd> beenden und neu öffnen. In einer laufenden Session lädt <code>/reload-plugins</code> ein <em>neu installiertes</em> Plugin nach.</p>
+      <p>Ist das Band da, aber Claude antwortet auf den Befehl wie auf eine normale Frage („nichts namens aicosts gefunden“), wurde er anders eingegeben, zum Beispiel <code>aicosts /login</code>. Richtig ist <code>/aicosts login</code> mit dem Schrägstrich ganz vorn.</p>
     </div>
   </details>
 
@@ -602,7 +605,7 @@ claude plugin update aicosts@aicosts</pre></div>
   <details>
     <summary>Die Verbinden-Seite lässt keinen Workspace auswählen</summary>
     <div>
-      <p>Meldung „Du bist in keinem Workspace Inhaber oder Mitglied“: Mit reinen Leserechten kann kein Gerät verbunden werden. Melde dich mit der Adresse an, die einen eigenen Workspace hat, lass dir die Rolle Mitglied geben oder lege über <strong>Eigenen Workspace anlegen</strong> einen eigenen an (mit Zugangscode).</p>
+      <p>Die Seite meldet, dass du im Workspace nur <strong>Leser</strong> bist (oder in keinem Workspace Inhaber oder Mitglied): Mit Leserechten kann kein Gerät verbunden werden. Bitte den Inhaber, dich unter <strong>Einstellungen → Team</strong> zum <strong>Mitglied</strong> zu machen, und lade die Seite danach neu – der Code aus Claude Code bleibt 10 Minuten gültig. Alternativ mit der Adresse anmelden, die einen eigenen Workspace hat, oder über <strong>Eigenen Workspace anlegen</strong> einen eigenen anlegen (mit Zugangscode).</p>
     </div>
   </details>
 
