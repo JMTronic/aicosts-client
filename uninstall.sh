@@ -72,7 +72,7 @@ $out"
     say "Nicht installiert (Scope user)."
   fi
 
-  step "Marketplace „$MP_NAME“"
+  step "Marketplace „${MP_NAME}“"
   mlist=$(cl plugin marketplace list --json 2>/dev/null) || die "\`claude plugin marketplace list\` ist fehlgeschlagen."
   if [ "$(list_has "$mlist" name "$MP_NAME")" = ja ]; then
     out=$(cl plugin marketplace remove "$MP_NAME" 2>&1) || die "Entfernen des Marketplace fehlgeschlagen:

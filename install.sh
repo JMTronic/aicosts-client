@@ -219,7 +219,7 @@ main() {
   SOURCE_ABS=
   if [ -d "$SOURCE" ]; then SOURCE_ABS=$(cd "$SOURCE" && pwd); fi
 
-  step "Marketplace „$MP_NAME“"
+  step "Marketplace „${MP_NAME}“"
   list=$(cl plugin marketplace list --json 2>/dev/null) || die "\`claude plugin marketplace list\` ist fehlgeschlagen."
   current=$(jxa mp-source "$list" "$MP_NAME") || die "Marketplace-Liste nicht lesbar."
 
@@ -227,12 +227,12 @@ main() {
     value=${current#*:}
     if [ "$value" != "$SOURCE" ] && { [ -z "$SOURCE_ABS" ] || [ "$value" != "$SOURCE_ABS" ]; }; then
       if [ "$FORCE" = 1 ]; then
-        say "Vorhandener Marketplace „$MP_NAME“ hat die Quelle $current, wird durch $SOURCE ersetzt (--force)."
+        say "Vorhandener Marketplace „${MP_NAME}“ hat die Quelle $current, wird durch $SOURCE ersetzt (--force)."
         out=$(cl plugin marketplace remove "$MP_NAME" 2>&1) || die "Entfernen des alten Marketplace fehlgeschlagen:
 $out"
         current=
       else
-        warn "Marketplace „$MP_NAME“ existiert bereits mit der Quelle $current (erwartet: $SOURCE)."
+        warn "Marketplace „${MP_NAME}“ existiert bereits mit der Quelle $current (erwartet: $SOURCE)."
         warn "Er wird beibehalten und nur aktualisiert. Umstellen mit: … | AICOSTS_FORCE=1 sh"
       fi
     fi
