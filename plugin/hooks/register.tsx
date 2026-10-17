@@ -39,6 +39,7 @@ import {
 } from './journal'
 import { baueSession, istLeer, pruefeSession, PAYLOAD_SCHEMA_VERSION, type IngestPayload } from './payload'
 import { limitSegmente } from './limits'
+import { ablehnungsText, fuegeHinweiseHinzu, hinweisZeile, leseHinweise, uploadText, werteAntwortAus } from './quittung'
 import { bandKosten, formatTokens, leseModus, modusText, monatKurz, parseKostenArgs, parseStats, STANDARD_MODUS } from './stats'
 
 // Plugin „aicosts“: Band (Kontext, Kosten, Abo-Limits, Cache), Cache-Keep-Alive, Live-Erfassung und Upload an die AICosts-Cloud.
@@ -46,7 +47,7 @@ import { bandKosten, formatTokens, leseModus, modusText, monatKurz, parseKostenA
 // Der Token liegt nur in $.store und wird nie angezeigt oder geloggt.
 
 /** Muss mit .claude-plugin/plugin.json übereinstimmen */
-export const VERSION = '0.2.2'
+export const VERSION = '0.2.3'
 const PARSER_VERSION = `aicosts-plugin/${VERSION}`
 
 // Schwellen für den Übergabe-Hinweis, in Prozent des Kontextfensters
@@ -64,6 +65,9 @@ const STATS_ABSTAND_MS = 60_000
 const NACHHOLEN_NACH_MS = 5_000
 const NACHHOLEN_TAGE = 14
 const NACHHOLEN_MAX = 50
+// Höchstzahl gelesener Journaldateien je Nachholversuch (Schutz bei großen Verzeichnissen).
+// Journale sind klein (wenige KB); 400 deckt das 14-Tage-Fenster bei ~28 Sessions/Tag in einem Durchgang ab.
+const NACHHOLEN_LESEN_MAX = 400
 
 // Schlüssel in $.store
 const K_TOKEN = 'token'
@@ -76,6 +80,7 @@ const K_STATS = 'statsCache'
 const K_LETZTER_UPLOAD = 'letzterUpload'
 const K_LETZTER_FEHLER = 'letzterFehler'
 const K_MODUS = 'kostenModus'
+const K_HINWEISE = 'uploadHinweise'
 
 const BEFEHLE = 'Befehle: /aicosts login | status | sync | kosten [echt|api] | logout'
 
@@ -134,6 +139,8 @@ let laeuftUpload = false
 let statsZuletzt = 0
 let laedtStats = false
 let offenAnzahl = 0
+// true, wenn der letzte Nachholversuch wegen eines Limits nicht alle Kandidaten gelesen hat
+let offenMehr = false
 let isPinging = false
 let login: { abgebrochen: boolean } | null = null
 
@@ -268,8 +275,9 @@ const setzeFehler = async ($: EngineInterface, text: string | null): Promise<voi
 }
 
 /**
- * Lädt die übergebenen Journale hoch (nur geänderte, nicht leere). Fehler werden gemerkt und beim
- * nächsten Anlass erneut versucht (Journal bleibt „dirty“). Rückgabe: kurze Meldung für /aicosts sync.
+ * Lädt die übergebenen Journale hoch (nur geänderte, nicht leere). Quittiert werden nur Sessions, die der
+ * Server in einer gültigen Antwort bestätigt (siehe quittung.ts); alles andere bleibt „dirty“ und wird beim
+ * nächsten Anlass erneut versucht. Rückgabe: kurze Meldung für /aicosts sync.
  */
 const hochladen = async ($: EngineInterface, journale: Journal[]): Promise<string> => {
   if (laeuftUpload) return 'Upload läuft bereits.'
@@ -282,9 +290,11 @@ const hochladen = async ($: EngineInterface, journale: Journal[]): Promise<strin
     const revs = kandidaten.map(j => j.rev)
     const sessions = kandidaten.map(j => baueSession(j, PARSER_VERSION))
     const gueltig = sessions.filter(s => pruefeSession(s).length === 0)
+    let ungueltigText: string | null = null
     if (gueltig.length < sessions.length) {
       const erste = sessions.find(s => pruefeSession(s).length > 0)
-      await setzeFehler($, `Session ${erste?.session_id ?? '?'} ungültig: ${erste ? pruefeSession(erste)[0] : ''}`)
+      ungueltigText = `Session ${erste?.session_id ?? '?'} ungültig: ${erste ? pruefeSession(erste)[0] : ''}`
+      await setzeFehler($, ungueltigText)
     }
     if (gueltig.length === 0) return 'Keine gültige Session zu senden.'
     const payload: IngestPayload = { schema_version: PAYLOAD_SCHEMA_VERSION, sessions: gueltig }
@@ -298,17 +308,41 @@ const hochladen = async ($: EngineInterface, journale: Journal[]): Promise<strin
       await setzeFehler($, meldung)
       return `Upload fehlgeschlagen: ${meldung}`
     }
+    const auswertung = werteAntwortAus(antwort.text, gueltig.map(s => s.session_id))
+    if (!auswertung.ok) {
+      await setzeFehler($, auswertung.fehler)
+      return `Upload nicht bestätigt: ${auswertung.fehler}`
+    }
     const now = await $.clock.now()
-    const gesendet = new Set(gueltig.map(s => s.session_id))
+    // gespeichert, übersprungen und abgelehnt sind für den gesendeten Stand endgültig → quittieren
+    // (Revisionsprüfung: Änderungen während des Uploads bleiben offen und werden erneut gesendet)
+    const ergebnis = new Map(auswertung.quittiert.map(e => [e.session_id, e]))
+    let erledigtAndere = 0
     for (const [i, j] of kandidaten.entries()) {
-      if (!gesendet.has(j.session_id)) continue
+      if (!ergebnis.has(j.session_id)) continue
       markiereHochgeladen(j, revs[i] ?? -1, now)
       await speichere($, j)
+      if (!j.dirty && j.session_id !== journal?.session_id) erledigtAndere += 1
     }
-    offenAnzahl = Math.max(0, offenAnzahl - gueltig.filter(s => s.session_id !== journal?.session_id).length)
-    await $.store.set(K_LETZTER_UPLOAD, { zeit: now, sessions: gueltig.length })
-    if (gueltig.length === sessions.length) await setzeFehler($, null)
-    return `Hochgeladen: ${gueltig.length} Session(s).`
+    offenAnzahl = Math.max(0, offenAnzahl - erledigtAndere)
+    const q = auswertung.quittiert
+    if (q.length > 0) {
+      await $.store.set(K_LETZTER_UPLOAD, {
+        zeit: now,
+        sessions: q.length,
+        uebersprungen: q.filter(e => e.status === 'uebersprungen').length,
+        abgelehnt: q.filter(e => e.status === 'abgelehnt').length,
+      })
+      const alt = leseHinweise(await $.store.get(K_HINWEISE))
+      const neu = fuegeHinweiseHinzu(alt, q, now)
+      if (JSON.stringify(neu) !== JSON.stringify(alt)) await $.store.set(K_HINWEISE, neu)
+    }
+    const ablehnung = ablehnungsText(q)
+    const fehlend = auswertung.ohneErgebnis.length
+    if (ablehnung !== null) await setzeFehler($, ablehnung)
+    else if (fehlend > 0) await setzeFehler($, `${fehlend} Session(s) ohne Ergebnis vom Server – werden erneut gesendet`)
+    else if (ungueltigText === null) await setzeFehler($, null)
+    return uploadText(q, fehlend)
   } catch {
     await setzeFehler($, 'Netzwerkfehler – wird später erneut versucht').catch(() => undefined)
     return 'Upload fehlgeschlagen (Netzwerk). Wird später erneut versucht.'
@@ -347,25 +381,33 @@ const planeUpload = ($: EngineInterface): void => {
   })
 }
 
-/** Offene (nicht hochgeladene) Journale anderer Sessions der letzten Tage */
+/**
+ * Offene (nicht hochgeladene) Journale anderer Sessions der letzten NACHHOLEN_TAGE Tage.
+ * Ältestes zuerst: Quittierte Journale werden neu gespeichert (neue mtime) und rücken nach hinten; ein offenes
+ * Journal rückt dadurch und durch das Altersfenster stetig nach vorn und wird vor Ablauf seiner Frist erreicht.
+ * Gelesen wird, bis NACHHOLEN_MAX offene gefunden oder NACHHOLEN_LESEN_MAX Dateien gelesen sind.
+ */
 const offeneJournale = async ($: EngineInterface): Promise<Journal[]> => {
   const ordner = await journalOrdner($)
   if (ordner === null) return []
   const eintraege = await $.fs.list(ordner).catch(() => [])
   const grenze = (await $.clock.now()) - NACHHOLEN_TAGE * 86_400_000
+  const aktuell = journal?.session_id
   const kandidaten = eintraege
-    .filter(e => e.kind === 'file' && e.name.endsWith('.json') && e.mtimeMs >= grenze)
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, NACHHOLEN_MAX)
+    .filter(e => e.kind === 'file' && e.name.endsWith('.json') && e.mtimeMs >= grenze && e.name !== `${aktuell}.json`)
+    .sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   const offen: Journal[] = []
+  let gelesen = 0
   for (const e of kandidaten) {
+    if (offen.length >= NACHHOLEN_MAX || gelesen >= NACHHOLEN_LESEN_MAX) break
+    gelesen += 1
     const sid = e.name.slice(0, -'.json'.length)
-    if (sid === journal?.session_id) continue
     const text = await $.fs.read(`${ordner}/${e.name}`).catch(() => null)
     const j = text === null ? null : leseJournal(text, sid)
     if (j !== null && j.dirty && !istLeer(j)) offen.push(j)
   }
   offenAnzahl = offen.length
+  offenMehr = gelesen < kandidaten.length
   return offen
 }
 
@@ -506,10 +548,18 @@ const starteLogin = async ($: EngineInterface): Promise<string> => {
   ].join('\n')
 }
 
+const uploadZusatz = (u: { uebersprungen?: number; abgelehnt?: number }): string => {
+  const teile: string[] = []
+  if (typeof u.uebersprungen === 'number' && u.uebersprungen > 0) teile.push(`${u.uebersprungen} übersprungen`)
+  if (typeof u.abgelehnt === 'number' && u.abgelehnt > 0) teile.push(`${u.abgelehnt} abgelehnt`)
+  return teile.length > 0 ? `, davon ${teile.join(', ')}` : ''
+}
+
 const statusText = async ($: EngineInterface): Promise<string> => {
   const token = await leseToken($)
   const ws = await $.store.get(K_WORKSPACE)
-  const upload = (await $.store.get(K_LETZTER_UPLOAD)) as { zeit?: number; sessions?: number } | undefined
+  const upload = (await $.store.get(K_LETZTER_UPLOAD)) as { zeit?: number; sessions?: number; uebersprungen?: number; abgelehnt?: number } | undefined
+  const hinweise = leseHinweise(await $.store.get(K_HINWEISE))
   const fehler = (await $.store.get(K_LETZTER_FEHLER)) as { zeit?: number; text?: string } | undefined
   const basisOverride = await $.store.get(K_BASIS)
   const j = await aktuellesJournal($).catch(() => null)
@@ -520,9 +570,10 @@ const statusText = async ($: EngineInterface): Promise<string> => {
     token !== null
       ? `Verbunden: ja${typeof ws === 'string' ? ` (Workspace „${ws}“)` : ''}`
       : 'Verbunden: nein – /aicosts login',
-    `Letzter Upload: ${typeof upload?.zeit === 'number' ? `${zeitText(upload.zeit)} (${upload.sessions ?? 0} Session(s))` : '–'}`,
-    `Offene Uploads: ${offenGesamt}`,
+    `Letzter Upload: ${typeof upload?.zeit === 'number' ? `${zeitText(upload.zeit)} (${upload.sessions ?? 0} Session(s)${uploadZusatz(upload)})` : '–'}`,
+    `Offene Uploads: ${offenGesamt}${offenMehr ? '+' : ''}`,
     `Letzter Fehler: ${typeof fehler?.text === 'string' ? `${fehler.text}${typeof fehler.zeit === 'number' ? ` (${zeitText(fehler.zeit)})` : ''}` : '–'}`,
+    ...(hinweise.length > 0 ? ['Nicht übernommen (zuletzt):', ...hinweise.map(hinweisZeile)] : []),
     ...(j !== null ? [`Diese Session: ${j.vollstaendig ? 'vollständig erfasst' : 'erst seit Plugin-Start erfasst (Teil-Erfassung)'}`] : []),
     ...modusText(await read($, modusAtom), token !== null, await read($, stats)),
     ...(istErlaubteUrl(basisOverride) ? [`Server: ${basisOverride}`] : []),

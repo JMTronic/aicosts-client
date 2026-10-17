@@ -103,7 +103,7 @@ Rechners (macOS-Computername).
 | Befehl | Wirkung |
 |---|---|
 | `/aicosts login` | Rechner mit deinem AICosts-Workspace verbinden (Geräte-Code im Browser bestätigen) |
-| `/aicosts status` | Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, Kostenmodus und Umrechnungsfaktor, Version (auch `/aicosts` ohne Zusatz) |
+| `/aicosts status` | Verbindung, Workspace, letzter Upload, offene Uploads, letzte Fehlermeldung, zuletzt nicht übernommene Sessions (vom Server übersprungen oder abgelehnt), Kostenmodus und Umrechnungsfaktor, Version (auch `/aicosts` ohne Zusatz) |
 | `/aicosts sync` | aktuelle Session und noch nicht hochgeladene ältere Sessions sofort hochladen |
 | `/aicosts kosten echt` · `/aicosts kosten api` | Kosten im Band als echte Kosten in Euro (Standard) oder als API-Gegenwert in US-Dollar; gilt für alle Sessions. `/aicosts kosten` allein zeigt Modus und Faktor |
 | `/aicosts logout` | Token auf diesem Rechner löschen; die Erfassung läuft lokal weiter |

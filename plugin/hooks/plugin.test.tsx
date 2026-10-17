@@ -1,6 +1,8 @@
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 import type { HttpInit, HttpResponse, On } from 'claude-code'
 
+import { neuesJournal, verbucheAntwort } from './journal'
+
 // Tests über die Engine: Hooks des Plugins mit nachgebildeter Umgebung (Dateien, Netz, Session).
 
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0)
@@ -19,6 +21,10 @@ interface Welt {
   sitzung: { id: string; turns: number; kosten: number; kontext: number; limits: { kind: string; percentUsed: number; resetsAt?: string }[] }
   uhr: ReturnType<typeof mock.clock>
   speicher: Map<string, unknown>
+  /** Änderungszeit je Datei (fs.write setzt eine stetig steigende Zeit) */
+  mtimes: Map<string, number>
+  /** gelesene Dateien (für die Begrenzung der Lesezugriffe) */
+  gelesen: string[]
 }
 
 const antwort = (status: number, daten: unknown): HttpResponse => ({
@@ -29,7 +35,7 @@ const antwort = (status: number, daten: unknown): HttpResponse => ({
 })
 
 /** Baut die Umgebung unter dem Plugin auf; `server` beantwortet HTTP-Anfragen */
-const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string, unknown> = {}): Welt => {
+const welt = (on: On, server: (a: Anfrage) => HttpResponse | Promise<HttpResponse>, store: Record<string, unknown> = {}): Welt => {
   const w: Welt = {
     dateien: new Map(),
     anfragen: [],
@@ -37,7 +43,10 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
     sitzung: { id: 'sess-1', turns: 0, kosten: 0, kontext: 20_000, limits: [] },
     uhr: mock.clock(on, { now: T0 }),
     speicher: new Map(),
+    mtimes: new Map(),
+    gelesen: [],
   }
+  let schreibZeit = T0
   const speicher = new Map<string, unknown>(Object.entries(store))
   w.speicher = speicher
   on('store.get', ($, e) => ({ value: speicher.get(e.key) }))
@@ -52,18 +61,21 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
   on('store.keys', () => ({ value: [...speicher.keys()] }))
   mock.env(on, { HOME })
   on('fs.read', ($, e) => {
+    w.gelesen.push(e.path)
     const text = w.dateien.get(e.path)
     if (text === undefined) throw new Error('ENOENT')
     return { value: text }
   })
   on('fs.write', ($, e) => {
     w.dateien.set(e.path, e.text)
+    schreibZeit += 1
+    w.mtimes.set(e.path, schreibZeit)
     return { value: undefined }
   })
   on('fs.list', ($, e) => ({
     value: [...w.dateien.keys()]
       .filter(p => p.startsWith(`${e.path}/`))
-      .map(p => ({ name: p.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: T0, isLink: false })),
+      .map(p => ({ name: p.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: w.mtimes.get(p) ?? T0, isLink: false })),
   }))
   on('fs.stat', () => {
     throw new Error('ENOENT')
@@ -86,10 +98,10 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
     w.toasts.push(e.text)
     return { value: undefined }
   })
-  on('http.fetch', ($, e) => {
+  on('http.fetch', async ($, e) => {
     const a = { url: e.url, init: e.init }
     w.anfragen.push(a)
-    return { value: server(a) }
+    return { value: await server(a) }
   })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
@@ -101,9 +113,25 @@ const welt = (on: On, server: (a: Anfrage) => HttpResponse, store: Record<string
 
 const STATS = { version: 1, monat: '2026-10', gesamt: { tokens: 2_000_000, output_tokens: 1000, kosten_usd: 12.5, sessions: 3 }, session: null }
 
+/** Session-IDs eines Upload-Bodys */
+const gesendeteIds = (a: Anfrage): string[] =>
+  (JSON.parse(a.init?.body ?? '{}') as { sessions?: { session_id: string }[] }).sessions?.map(s => s.session_id) ?? []
+
+/** Server nach neuem Vertrag: alle gespeichert, mit Einzelergebnissen */
+const ingestErfolg = (a: Anfrage): HttpResponse => {
+  const ids = gesendeteIds(a)
+  return antwort(200, {
+    upserted: ids.length,
+    unassigned: 0,
+    uebersprungen: 0,
+    abgelehnt: 0,
+    ergebnisse: ids.map(session_id => ({ session_id, status: 'gespeichert', grund: null })),
+  })
+}
+
 const standardServer = (a: Anfrage): HttpResponse => {
   if (a.url.endsWith('/ingest/stats')) return antwort(200, STATS)
-  if (a.url.endsWith('/ingest')) return antwort(200, { upserted: 1, unassigned: 0, abgelehnt: 0 })
+  if (a.url.endsWith('/ingest')) return ingestErfolg(a)
   return antwort(404, { fehler: 'unbekannt' })
 }
 
@@ -528,4 +556,203 @@ test('Rückfall auf USD mit Zusatz „API“: kein Abo, älterer Server, nicht v
   expect(await ui.find({ type: 'Text', text: /^\$7\.48\sAPI$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /nicht\sverbunden/ })).toBeDefined()
   await ui.unmount()
+})
+
+// ---------------------------------------------------------------------------
+// R3: Quittierung nur bestätigter Sessions
+
+/** Offenes (oder sauberes) Journal einer anderen Session mit gültigem Inhalt, mtime gezielt gesetzt */
+const legeJournalAn = (w: Welt, sid: string, opt: { dirty?: boolean; mtime?: number } = {}): void => {
+  const j = neuesJournal(sid, T0 - 3_600_000, true)
+  j.cwd = '/projekt'
+  verbucheAntwort(j, { usage: ANTWORT, durationMs: 1000, ende: T0 - 1_800_000, cacheTtlMinuten: 60 })
+  j.dirty = opt.dirty ?? true
+  w.dateien.set(JOURNAL(sid), JSON.stringify(j))
+  w.mtimes.set(JOURNAL(sid), opt.mtime ?? T0 - 60_000)
+}
+
+const istDirty = (w: Welt, sid: string): boolean => JSON.parse(w.dateien.get(JOURNAL(sid)) ?? '{}').dirty === true
+
+const ingestAnfragen = (w: Welt): Anfrage[] => w.anfragen.filter(a => a.url.endsWith('/ingest'))
+
+test('R3: voller Erfolg mit Einzelergebnissen quittiert und meldet Hochgeladen', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  legeJournalAn(w, 'sess-alt')
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).toBe('Hochgeladen: 1 Session(s).')
+  expect(istDirty(w, 'sess-alt')).toBe(false)
+  expect(w.speicher.get('letzterUpload')).toMatchObject({ sessions: 1, uebersprungen: 0, abgelehnt: 0 })
+})
+
+test('R3: Ablehnung ohne Einzelergebnisse (älterer Server) wird nicht quittiert', async ($, on) => {
+  const w = welt(on, a => (a.url.endsWith('/ingest') ? antwort(200, { upserted: 0, unassigned: 0, abgelehnt: 1 }) : standardServer(a)), {
+    token: 'aic_geheim1234567',
+  })
+  legeJournalAn(w, 'sess-alt')
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).not.toContain('Hochgeladen')
+  expect(r.text).toContain('nicht bestätigt')
+  expect(istDirty(w, 'sess-alt')).toBe(true)
+  expect(w.speicher.get('letzterUpload')).toBe(undefined)
+  const status = await befehl($, 'status')
+  expect(status.text).toContain('Offene Uploads: 1')
+  expect(status.text).toContain('ohne Einzelergebnisse')
+})
+
+test('R3: älterer Server mit sauberem Erfolg quittiert weiterhin alles', async ($, on) => {
+  const w = welt(
+    on,
+    a => (a.url.endsWith('/ingest') ? antwort(200, { upserted: gesendeteIds(a).length, unassigned: 1, abgelehnt: 0 }) : standardServer(a)),
+    { token: 'aic_geheim1234567' },
+  )
+  legeJournalAn(w, 'sess-x')
+  legeJournalAn(w, 'sess-y')
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  expect((await befehl($, 'sync')).text).toBe('Hochgeladen: 2 Session(s).')
+  expect(istDirty(w, 'sess-x') || istDirty(w, 'sess-y')).toBe(false)
+})
+
+test('R3: gemischter Batch quittiert nur Sessions mit Eintrag, Hinweise sichtbar, kein erneuter Versand', async ($, on) => {
+  const w = welt(
+    on,
+    a => {
+      if (!a.url.endsWith('/ingest')) return standardServer(a)
+      const ids = gesendeteIds(a)
+      const ergebnisse = ids
+        .filter(id => id !== 'sess-ohne')
+        .map(session_id =>
+          session_id === 'sess-gut'
+            ? { session_id, status: 'gespeichert', grund: null }
+            : session_id === 'sess-schutz'
+              ? { session_id, status: 'uebersprungen', grund: 'geringere_quelle' }
+              : { session_id, status: 'abgelehnt', grund: 'fremde_session' },
+        )
+      const zahl = (st: string): number => ergebnisse.filter(e => e.status === st).length
+      return antwort(200, { upserted: zahl('gespeichert'), unassigned: 0, uebersprungen: zahl('uebersprungen'), abgelehnt: zahl('abgelehnt'), ergebnisse })
+    },
+    { token: 'aic_geheim1234567' },
+  )
+  for (const sid of ['sess-gut', 'sess-schutz', 'sess-fremd', 'sess-ohne']) legeJournalAn(w, sid)
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).toContain('Hochgeladen: 2 Session(s), davon 1 übersprungen (bessere Erfassung auf dem Server).')
+  expect(r.text).toContain('1 abgelehnt')
+  expect(r.text).toContain('1 ohne Ergebnis')
+  expect(istDirty(w, 'sess-gut')).toBe(false)
+  expect(istDirty(w, 'sess-schutz')).toBe(false)
+  expect(istDirty(w, 'sess-fremd')).toBe(false)
+  expect(istDirty(w, 'sess-ohne')).toBe(true)
+  expect(w.speicher.get('letzterUpload')).toMatchObject({ sessions: 3, uebersprungen: 1, abgelehnt: 1 })
+
+  const status = await befehl($, 'status')
+  expect(status.text).toContain('Letzter Fehler: Session sess-fremd gehört einem anderen Nutzer – nicht übernommen')
+  expect(status.text).toContain('Nicht übernommen (zuletzt):')
+  expect(status.text).toContain('sess-schutz: uebersprungen – bessere Erfassung auf dem Server behalten')
+  expect(status.text).toContain('sess-fremd: abgelehnt – gehört einem anderen Nutzer')
+  expect(status.text).toContain('Letzter Upload:')
+  expect(status.text).toContain('davon 1 übersprungen, 1 abgelehnt')
+
+  // erneuter Sync sendet nur die unbestätigte Session
+  await befehl($, 'sync')
+  expect(gesendeteIds(ingestAnfragen(w).at(-1) ?? { url: '', init: undefined })).toEqual(['sess-ohne'])
+})
+
+test('R3: ungültiges JSON bei HTTP 200 ist kein Erfolg', async ($, on) => {
+  const w = welt(on, a => (a.url.endsWith('/ingest') ? { status: 200, ok: true, headers: {}, text: '<html>oops' } : standardServer(a)), {
+    token: 'aic_geheim1234567',
+  })
+  legeJournalAn(w, 'sess-alt')
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).not.toContain('Hochgeladen')
+  expect(istDirty(w, 'sess-alt')).toBe(true)
+  expect((await befehl($, 'status')).text).toContain('kein JSON')
+})
+
+test('R3: Änderung während des Uploads bleibt offen', async ($, on) => {
+  let freigeben: () => void = () => undefined
+  let haengen = true
+  // Upload hält an, bis der Test eine weitere Antwort verbucht hat
+  const w = welt(
+    on,
+    async a => {
+      if (a.url.endsWith('/ingest') && haengen) {
+        haengen = false
+        await new Promise<void>(r => {
+          freigeben = r
+        })
+      }
+      return standardServer(a)
+    },
+    { token: 'aic_geheim1234567' },
+  )
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ text: '', turnId: 't1' })
+  await $.turn.complete({ ...fertig, turnId: 't1', durationMs: 1000, usage: ANTWORT })
+  const sync = befehl($, 'sync')
+  await w.uhr.settle()
+  // Upload steht wirklich in der Anfrage, wenn die nächste Antwort kommt
+  expect(haengen).toBe(false)
+  expect(ingestAnfragen(w).length).toBe(1)
+  await $.turn.complete({ ...fertig, turnId: 't2', durationMs: 1000, usage: ANTWORT })
+  freigeben()
+  expect((await sync).text).toBe('Hochgeladen: 1 Session(s).')
+  expect(istDirty(w, 'sess-1')).toBe(true)
+  expect(JSON.parse(w.dateien.get(JOURNAL('sess-1')) ?? '{}').letzterUpload).not.toBe(null)
+})
+
+// ---------------------------------------------------------------------------
+// R5: Nachholen findet auch ältere offene Journale
+
+test('R5: 50 neuere saubere und ein älteres offenes Journal → wird nachgeholt', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  legeJournalAn(w, 'sess-alt-offen', { mtime: T0 - 5 * 86_400_000 })
+  for (let i = 0; i < 50; i += 1) legeJournalAn(w, `sess-sauber-${i}`, { dirty: false, mtime: T0 - 86_400_000 + i })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).toBe('Hochgeladen: 1 Session(s).')
+  expect(istDirty(w, 'sess-alt-offen')).toBe(false)
+})
+
+test('R5: mehr als 50 offene werden über aufeinanderfolgende Aufrufe abgearbeitet', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  for (let i = 0; i < 60; i += 1) legeJournalAn(w, `sess-offen-${String(i).padStart(2, '0')}`, { mtime: T0 - 86_400_000 + i })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  expect((await befehl($, 'status')).text).toContain('Offene Uploads: 50+')
+  expect((await befehl($, 'sync')).text).toBe('Hochgeladen: 50 Session(s).')
+  // die ältesten zuerst
+  expect(istDirty(w, 'sess-offen-00')).toBe(false)
+  expect(istDirty(w, 'sess-offen-59')).toBe(true)
+  expect((await befehl($, 'status')).text).toContain('Offene Uploads: 10')
+  expect((await befehl($, 'sync')).text).toBe('Hochgeladen: 10 Session(s).')
+  expect([...w.dateien.keys()].filter(p => p.includes('sess-offen-')).some(p => JSON.parse(w.dateien.get(p) ?? '{}').dirty)).toBe(false)
+  expect((await befehl($, 'sync')).text).toBe('Nichts zu senden – alles aktuell.')
+})
+
+test('R5: beschädigte Datei, aktuelle Session und Altersgrenze', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  w.dateien.set(JOURNAL('sess-kaputt'), '{kaputt')
+  w.mtimes.set(JOURNAL('sess-kaputt'), T0 - 10 * 86_400_000)
+  legeJournalAn(w, 'sess-zu-alt', { mtime: T0 - 15 * 86_400_000 })
+  legeJournalAn(w, 'sess-ok', { mtime: T0 - 13 * 86_400_000 })
+  // offenes Journal der laufenden Session (wird nur als aktuelle Session gesendet, nicht doppelt)
+  legeJournalAn(w, 'sess-1', { mtime: T0 - 20_000 })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  const r = await befehl($, 'sync')
+  expect(r.text).toBe('Hochgeladen: 2 Session(s).')
+  expect(gesendeteIds(ingestAnfragen(w).at(-1) ?? { url: '', init: undefined }).sort()).toEqual(['sess-1', 'sess-ok'])
+  expect(istDirty(w, 'sess-zu-alt')).toBe(true)
+  expect(w.dateien.get(JOURNAL('sess-kaputt'))).toBe('{kaputt')
+})
+
+test('R5: Lesezugriffe je Nachholversuch sind begrenzt', async ($, on) => {
+  const w = welt(on, standardServer, { token: 'aic_geheim1234567' })
+  for (let i = 0; i < 450; i += 1) legeJournalAn(w, `sess-s-${String(i).padStart(3, '0')}`, { dirty: false, mtime: T0 - 86_400_000 + i })
+  await $.session.start({ cwd: '/projekt', surface: 'terminal', isInteractive: true })
+  w.gelesen.length = 0
+  const status = await befehl($, 'status')
+  expect(w.gelesen.filter(p => p.includes('sess-s-')).length).toBe(400)
+  expect(status.text).toContain('Offene Uploads: 0+')
 })
